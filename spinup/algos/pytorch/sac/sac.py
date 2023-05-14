@@ -1,3 +1,4 @@
+import pickle
 from copy import deepcopy
 import itertools
 import numpy as np
@@ -7,7 +8,18 @@ import gym
 import time
 import spinup.algos.pytorch.sac.core as core
 from spinup.utils.logx import EpochLogger
+from matplotlib import animation
+import matplotlib.pyplot as plt
 
+def save_gif(frames, id):
+    patch = plt.imshow(frames[0])
+    plt.axis('off')
+
+    def animate(i):
+        patch.set_data(frames[i])
+
+    anim = animation.FuncAnimation(plt.gcf(), animate, frames=len(frames), interval=5)
+    anim.save('./run' + str(id) + '.gif', writer='imagemagick', fps=10)
 
 class ReplayBuffer:
     """
@@ -45,7 +57,7 @@ class ReplayBuffer:
 def sac(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0, 
         steps_per_epoch=4000, epochs=100, replay_size=int(1e6), gamma=0.99, 
         polyak=0.995, lr=1e-3, alpha=0.2, batch_size=100, start_steps=10000, 
-        update_after=1000, update_every=50, num_test_episodes=10, max_ep_len=1000, 
+        update_after=1000, update_every=50, num_test_episodes=1, max_ep_len=1000,
         logger_kwargs=dict(), save_freq=1):
     """
     Soft Actor-Critic (SAC)
@@ -276,6 +288,25 @@ def sac(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
                 ep_ret += r
                 ep_len += 1
             logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
+    def test_using_model_file(filename):
+        test_model = torch.load(filename).to('cpu')
+        for j in range(num_test_episodes):
+            o, d, ep_ret, ep_len = test_env.reset(), False, 0, 0
+            frames = []
+            while not(d or (ep_len == max_ep_len)):
+                # frames.append(test_env.render(mode='rgb_array'))
+                # Take deterministic actions at test time
+                a = test_model.act(torch.as_tensor(o, dtype=torch.float32), True)
+                o, r, d, _ = test_env.step(a)
+                print("ep_len = %d, done = %d" % (ep_len, d))
+                ep_ret += r
+                ep_len += 1
+            if d:
+                print(" %dth test, done at %d" % (j, ep_len))
+            save_gif(frames, j)
+        test_env.close()
+
+
 
     # Prepare for interaction with environment
     total_steps = steps_per_epoch * epochs
@@ -283,88 +314,102 @@ def sac(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     o, ep_ret, ep_len = env.reset(), 0, 0
 
     # Main loop: collect experience in env and update/log each epoch
-    for t in range(total_steps):
-        
-        # Until start_steps have elapsed, randomly sample actions
-        # from a uniform distribution for better exploration. Afterwards, 
-        # use the learned policy. 
-        if t > start_steps:
-            a = get_action(o)
-        else:
-            a = env.action_space.sample()
+    if args.do_train:
+        for t in range(total_steps):
 
-        # Step the env
-        o2, r, d, _ = env.step(a)
-        ep_ret += r
-        ep_len += 1
+            # Until start_steps have elapsed, randomly sample actions
+            # from a uniform distribution for better exploration. Afterwards,
+            # use the learned policy.
+            if t > start_steps:
+                a = get_action(o)
+            else:
+                a = env.action_space.sample()
 
-        # Ignore the "done" signal if it comes from hitting the time
-        # horizon (that is, when it's an artificial terminal signal
-        # that isn't based on the agent's state)
-        d = False if ep_len==max_ep_len else d
+            # Step the env
+            o2, r, d, _ = env.step(a)
+            ep_ret += r
+            ep_len += 1
 
-        # Store experience to replay buffer
-        replay_buffer.store(o, a, r, o2, d)
+            # Ignore the "done" signal if it comes from hitting the time
+            # horizon (that is, when it's an artificial terminal signal
+            # that isn't based on the agent's state)
+            d = False if ep_len==max_ep_len else d
 
-        # Super critical, easy to overlook step: make sure to update 
-        # most recent observation!
-        o = o2
+            # Store experience to replay buffer
+            replay_buffer.store(o, a, r, o2, d)
 
-        # End of trajectory handling
-        if d or (ep_len == max_ep_len):
-            logger.store(EpRet=ep_ret, EpLen=ep_len)
-            o, ep_ret, ep_len = env.reset(), 0, 0
+            # Super critical, easy to overlook step: make sure to update
+            # most recent observation!
+            o = o2
 
-        # Update handling
-        if t >= update_after and t % update_every == 0:
-            for j in range(update_every):
-                batch = replay_buffer.sample_batch(batch_size)
-                update(data=batch)
+            # End of trajectory handling
+            if d or (ep_len == max_ep_len):
+                logger.store(EpRet=ep_ret, EpLen=ep_len)
+                o, ep_ret, ep_len = env.reset(), 0, 0
 
-        # End of epoch handling
-        if (t+1) % steps_per_epoch == 0:
-            epoch = (t+1) // steps_per_epoch
+            # Update handling
+            if t >= update_after and t % update_every == 0:
+                for j in range(update_every):
+                    batch = replay_buffer.sample_batch(batch_size)
+                    update(data=batch)
 
-            # Save model
-            if (epoch % save_freq == 0) or (epoch == epochs):
-                logger.save_state({'env': env}, None)
+            # End of epoch handling
+            if (t+1) % steps_per_epoch == 0:
+                epoch = (t+1) // steps_per_epoch
 
-            # Test the performance of the deterministic version of the agent.
-            test_agent()
+                # Save model
+                if (epoch % save_freq == 0) or (epoch == epochs):
+                    logger.save_state({'env': env}, None)
 
-            # Log info about epoch
-            logger.log_tabular('Epoch', epoch)
-            logger.log_tabular('EpRet', with_min_and_max=True)
-            logger.log_tabular('TestEpRet', with_min_and_max=True)
-            logger.log_tabular('EpLen', average_only=True)
-            logger.log_tabular('TestEpLen', average_only=True)
-            logger.log_tabular('TotalEnvInteracts', t)
-            logger.log_tabular('Q1Vals', with_min_and_max=True)
-            logger.log_tabular('Q2Vals', with_min_and_max=True)
-            logger.log_tabular('LogPi', with_min_and_max=True)
-            logger.log_tabular('LossPi', average_only=True)
-            logger.log_tabular('LossQ', average_only=True)
-            logger.log_tabular('Time', time.time()-start_time)
-            logger.dump_tabular()
+                # Test the performance of the deterministic version of the agent.
+                test_agent()
+
+                # Log info about epoch
+                logger.log_tabular('Epoch', epoch)
+                logger.log_tabular('EpRet', with_min_and_max=True)
+                logger.log_tabular('TestEpRet', with_min_and_max=True)
+                logger.log_tabular('EpLen', average_only=True)
+                logger.log_tabular('TestEpLen', average_only=True)
+                logger.log_tabular('TotalEnvInteracts', t)
+                logger.log_tabular('Q1Vals', with_min_and_max=True)
+                logger.log_tabular('Q2Vals', with_min_and_max=True)
+                logger.log_tabular('LogPi', with_min_and_max=True)
+                logger.log_tabular('LossPi', average_only=True)
+                logger.log_tabular('LossQ', average_only=True)
+                logger.log_tabular('Time', time.time()-start_time)
+                logger.dump_tabular()
+
+    if args.do_eval:
+        test_using_model_file('/home/csy/open_source/spinningup/data/sac/sac_s0/pyt_save/model.pt')
+
 
 if __name__ == '__main__':
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--env', type=str, default='HalfCheetah-v2')
-    parser.add_argument('--hid', type=int, default=256)
-    parser.add_argument('--l', type=int, default=2)
-    parser.add_argument('--gamma', type=float, default=0.99)
-    parser.add_argument('--seed', '-s', type=int, default=0)
-    parser.add_argument('--epochs', type=int, default=50)
-    parser.add_argument('--exp_name', type=str, default='sac')
-    args = parser.parse_args()
+    read_pkl = False
+    if read_pkl:
+        import joblib
+        with open("/home/csy/open_source/spinningup/data/sac/sac_s0/vars.pkl", "rb") as f:
+            data = joblib.load(f) # only load for one dump
+            print("data load finish")
+    else:
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--env', type=str, default='Pendulum-v0')
+        parser.add_argument('--hid', type=int, default=256)
+        parser.add_argument('--l', type=int, default=2)
+        parser.add_argument('--gamma', type=float, default=0.99)
+        parser.add_argument('--seed', '-s', type=int, default=0)
+        parser.add_argument('--epochs', type=int, default=20)
+        parser.add_argument('--exp_name', type=str, default='sac')
+        parser.add_argument('--do_train', type=bool, default=True)
+        parser.add_argument('--do_eval', type=bool, default=False)
+        args = parser.parse_args()
 
-    from spinup.utils.run_utils import setup_logger_kwargs
-    logger_kwargs = setup_logger_kwargs(args.exp_name, args.seed)
+        from spinup.utils.run_utils import setup_logger_kwargs
+        logger_kwargs = setup_logger_kwargs(args.exp_name, args.seed)
 
-    torch.set_num_threads(torch.get_num_threads())
+        torch.set_num_threads(torch.get_num_threads())
 
-    sac(lambda : gym.make(args.env), actor_critic=core.MLPActorCritic,
-        ac_kwargs=dict(hidden_sizes=[args.hid]*args.l), 
-        gamma=args.gamma, seed=args.seed, epochs=args.epochs,
-        logger_kwargs=logger_kwargs)
+        sac(lambda : gym.make(args.env), actor_critic=core.MLPActorCritic,
+            ac_kwargs=dict(hidden_sizes=[args.hid]*args.l),
+            gamma=args.gamma, seed=args.seed, epochs=args.epochs,
+            logger_kwargs=logger_kwargs)
