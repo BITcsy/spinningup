@@ -164,9 +164,10 @@ def make_plots(all_logdirs, legend=None, xaxis=None, values=None, count=False,
 
 
 def main():
+    home_path = os.environ['HOME']
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('logdir', nargs='*')
+    parser.add_argument('logdir', nargs='*', default=[home_path + '/open_source/my_spin/spinningup/data/sac/sac_s0'])
     parser.add_argument('--legend', '-l', nargs='*')
     parser.add_argument('--xaxis', '-x', default='TotalEnvInteracts')
     parser.add_argument('--value', '-y', default='Performance', nargs='*')
@@ -176,6 +177,7 @@ def main():
     parser.add_argument('--exclude', nargs='*')
     parser.add_argument('--est', default='mean')
     args = parser.parse_args()
+    print("debug print logdir = %s" % args.logdir)
     """
 
     Args: 
