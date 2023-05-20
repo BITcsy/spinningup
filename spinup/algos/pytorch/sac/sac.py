@@ -10,7 +10,9 @@ import spinup.algos.pytorch.sac.core as core
 from spinup.utils.logx import EpochLogger
 from matplotlib import animation
 import matplotlib.pyplot as plt
+import os
 
+home_path = os.environ['HOME']
 def save_gif(frames, id):
     patch = plt.imshow(frames[0])
     plt.axis('off')
@@ -55,7 +57,7 @@ class ReplayBuffer:
 
 
 def sac(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0, 
-        steps_per_epoch=4000, epochs=100, replay_size=int(1e6), gamma=0.99, 
+        steps_per_epoch=4000, epochs=100, replay_size=int(1e6), gamma=0.99,
         polyak=0.995, lr=1e-3, alpha=0.2, batch_size=100, start_steps=10000, 
         update_after=1000, update_every=50, num_test_episodes=1, max_ep_len=1000,
         logger_kwargs=dict(), save_freq=1):
@@ -294,7 +296,7 @@ def sac(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
             o, d, ep_ret, ep_len = test_env.reset(), False, 0, 0
             frames = []
             while not(d or (ep_len == max_ep_len)):
-                # frames.append(test_env.render(mode='rgb_array'))
+                frames.append(test_env.render(mode='rgb_array'))
                 # Take deterministic actions at test time
                 a = test_model.act(torch.as_tensor(o, dtype=torch.float32), True)
                 o, r, d, _ = test_env.step(a)
@@ -380,14 +382,14 @@ def sac(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
                 logger.dump_tabular()
 
     if args.do_eval:
-        test_using_model_file('/home/csy/open_source/spinningup/data/sac/sac_s0/pyt_save/model.pt')
+        test_using_model_file(home_path + '/open_source/my_spin/spinningup/data/sac/sac_s0/pyt_save/model.pt')
 
 
 if __name__ == '__main__':
     read_pkl = False
     if read_pkl:
         import joblib
-        with open("/home/csy/open_source/spinningup/data/sac/sac_s0/vars.pkl", "rb") as f:
+        with open(home_path + "/open_source/my_spin/spinningup/data/sac/sac_s0/vars.pkl", "rb") as f:
             data = joblib.load(f) # only load for one dump
             print("data load finish")
     else:
@@ -400,8 +402,8 @@ if __name__ == '__main__':
         parser.add_argument('--seed', '-s', type=int, default=0)
         parser.add_argument('--epochs', type=int, default=20)
         parser.add_argument('--exp_name', type=str, default='sac')
-        parser.add_argument('--do_train', type=bool, default=True)
-        parser.add_argument('--do_eval', type=bool, default=False)
+        parser.add_argument('--do_train', type=bool, default=False)
+        parser.add_argument('--do_eval', type=bool, default=True)
         args = parser.parse_args()
 
         from spinup.utils.run_utils import setup_logger_kwargs
